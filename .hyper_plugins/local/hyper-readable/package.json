@@ -1,0 +1,7 @@
+{
+  "name": "hyper-readable",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "description": "Per-background adaptive scrim so terminal text stays readable over any hyper-pokemon theme."
+}
