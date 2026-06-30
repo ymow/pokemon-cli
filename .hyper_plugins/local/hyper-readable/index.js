@@ -152,8 +152,21 @@ exports.decorateConfig = config => {
 
   const fg = toHex(pick);
 
+  // Some TUIs (notably Codex's user-message / attachment block) fill a panel
+  // with ANSI black / bright-black -- a "surface" shade they calibrate for a
+  // *black* terminal. Our visible backdrop is the pokemon image + 底色 scrim,
+  // not the real (transparent) terminal background, so that panel lands as a
+  // jarring near-black bar that ignores the theme. Remap the dark surface slots
+  // to a gentle elevation of the 底色 (blend toward the text pick) so those
+  // opaque fills harmonize with the theme instead of clashing.
+  const surface = toHex(blend(bg, pick, 0.14).map(Math.round));
+  const colors = Object.assign({}, config.colors, {
+    black: surface,
+    lightBlack: surface,
+  });
+
   const overlayCSS = `
-    /* hyper-readable: adaptive text ${fg} on 底色 ${toHex(bg)} (contrast ${pickC.toFixed(2)}) */
+    /* hyper-readable: adaptive text ${fg} on 底色 ${toHex(bg)} (contrast ${pickC.toFixed(2)}); surface ${surface} */
     .terms_terms {
       box-shadow: inset 0 0 0 100vmax ${scrim} !important;
     }
@@ -162,6 +175,7 @@ exports.decorateConfig = config => {
   return Object.assign({}, config, {
     foregroundColor: fg,
     cursorColor: fg,
+    colors,
     termCSS: config.termCSS || '',
     css: `${config.css || ''}\n${overlayCSS}`
   });
