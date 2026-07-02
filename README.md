@@ -35,6 +35,10 @@ adaptively from the background ("底色"):
    `.terms_terms`, above the image but below the transparent terminal canvas, so
    it works under any renderer). Stronger text contrast → lighter scrim (image
    shows more); weaker → heavier scrim (readability wins).
+4. Keep terminal input panels readable by moving black/default TUI surfaces
+   toward the same readable background when the chosen foreground would be low
+   contrast on black. This fixes Codex-style prompt boxes on light Pokémon
+   themes.
 
 Verified across all 153 `hyper-pokemon` themes: **121 distinct text colors, 0
 below AA 4.5**.

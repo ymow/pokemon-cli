@@ -1,0 +1,10 @@
+{
+  "name": "oracle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A foresight layer over the CLI — predicts your next steps + decision tree.",
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  }
+}

@@ -98,6 +98,22 @@ function deriveFromBg(bg) {
   return out.map(Math.round);
 }
 
+function readableExtremeAgainst(color) {
+  return contrast([0, 0, 0], color) >= contrast([255, 255, 255], color)
+    ? [0, 0, 0]
+    : [255, 255, 255];
+}
+
+function readableSurfaceFor(fg, bg, currentSurface) {
+  if (currentSurface && contrast(currentSurface, fg) >= 4.5) {
+    return currentSurface;
+  }
+  if (contrast(bg, fg) >= 4.5) {
+    return bg;
+  }
+  return readableExtremeAgainst(fg);
+}
+
 exports.decorateConfig = config => {
   // 底色: hyper-pokemon puts the theme background (unibody/primary) on borderColor.
   const bg = toRgb(config.borderColor) || toRgb(config.backgroundColor);
@@ -151,22 +167,26 @@ exports.decorateConfig = config => {
   const scrim = `rgba(${Math.round(bg[0])}, ${Math.round(bg[1])}, ${Math.round(bg[2])}, ${alpha})`;
 
   const fg = toHex(pick);
+  const readableSurface = readableSurfaceFor(pick, bg, toRgb(config.backgroundColor));
+  const readableSurfaceHex = toHex(readableSurface);
 
   // Some TUIs (notably Codex's user-message / attachment block) fill a panel
   // with ANSI black / bright-black -- a "surface" shade they calibrate for a
   // *black* terminal. Our visible backdrop is the pokemon image + 底色 scrim,
   // not the real (transparent) terminal background, so that panel lands as a
-  // jarring near-black bar that ignores the theme. Remap the dark surface slots
-  // to a gentle elevation of the 底色 (blend toward the text pick) so those
-  // opaque fills harmonize with the theme instead of clashing.
-  const surface = toHex(blend(bg, pick, 0.14).map(Math.round));
-  const colors = Object.assign({}, config.colors, {
-    black: surface,
-    lightBlack: surface,
+  // jarring near-black bar that ignores the theme. Prefer a gentle elevation of
+  // the 底色, but fall back to a contrast-safe surface if the foreground would
+  // become hard to read.
+  const elevatedSurface = blend(bg, pick, 0.14).map(Math.round);
+  const tuiSurface = contrast(elevatedSurface, pick) >= AA ? elevatedSurface : readableSurface;
+  const tuiSurfaceHex = toHex(tuiSurface);
+  const colors = Object.assign({}, config.colors || {}, {
+    black: tuiSurfaceHex,
+    lightBlack: tuiSurfaceHex,
   });
 
   const overlayCSS = `
-    /* hyper-readable: adaptive text ${fg} on 底色 ${toHex(bg)} (contrast ${pickC.toFixed(2)}); surface ${surface} */
+    /* hyper-readable: adaptive text ${fg} on 底色 ${toHex(bg)} (contrast ${pickC.toFixed(2)}); surface ${tuiSurfaceHex} */
     .terms_terms {
       box-shadow: inset 0 0 0 100vmax ${scrim} !important;
     }
@@ -174,7 +194,9 @@ exports.decorateConfig = config => {
 
   return Object.assign({}, config, {
     foregroundColor: fg,
+    backgroundColor: readableSurfaceHex,
     cursorColor: fg,
+    cursorAccentColor: toHex(readableExtremeAgainst(pick)),
     colors,
     termCSS: config.termCSS || '',
     css: `${config.css || ''}\n${overlayCSS}`
