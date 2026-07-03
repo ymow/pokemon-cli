@@ -104,10 +104,7 @@ function readableExtremeAgainst(color) {
     : [255, 255, 255];
 }
 
-function readableSurfaceFor(fg, bg, currentSurface) {
-  if (currentSurface && contrast(currentSurface, fg) >= 4.5) {
-    return currentSurface;
-  }
+function readableSurfaceFor(fg, bg) {
   if (contrast(bg, fg) >= 4.5) {
     return bg;
   }
@@ -167,8 +164,7 @@ exports.decorateConfig = config => {
   const scrim = `rgba(${Math.round(bg[0])}, ${Math.round(bg[1])}, ${Math.round(bg[2])}, ${alpha})`;
 
   const fg = toHex(pick);
-  const readableSurface = readableSurfaceFor(pick, bg, toRgb(config.backgroundColor));
-  const readableSurfaceHex = toHex(readableSurface);
+  const readableSurface = readableSurfaceFor(pick, bg);
 
   // Some TUIs (notably Codex's user-message / attachment block) fill a panel
   // with ANSI black / bright-black -- a "surface" shade they calibrate for a
@@ -191,14 +187,25 @@ exports.decorateConfig = config => {
       box-shadow: inset 0 0 0 100vmax ${scrim} !important;
     }
   `;
+  const terminalCSS = `
+    /* Avoid theme/plugin text shadows double-painting CJK glyphs. */
+    .xterm,
+    .xterm-screen,
+    .xterm-rows,
+    .xterm-rows span,
+    .xterm-screen canvas {
+      text-shadow: none !important;
+      -webkit-text-stroke-width: 0 !important;
+      filter: none !important;
+    }
+  `;
 
   return Object.assign({}, config, {
     foregroundColor: fg,
-    backgroundColor: readableSurfaceHex,
     cursorColor: fg,
     cursorAccentColor: toHex(readableExtremeAgainst(pick)),
     colors,
-    termCSS: config.termCSS || '',
+    termCSS: `${config.termCSS || ''}\n${terminalCSS}`,
     css: `${config.css || ''}\n${overlayCSS}`
   });
 };

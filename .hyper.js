@@ -17,8 +17,9 @@ module.exports = {
         fontWeight: 'normal',
         // font weight for bold characters: 'normal' or 'bold'
         fontWeightBold: 'bold',
-        // line height as a relative unit
-        lineHeight: 1,
+        // line height as a relative unit. Keep a little extra room for CJK
+        // fallback glyphs so mixed Chinese/ASCII output does not collide.
+        lineHeight: 1.16,
         // letter spacing as a relative unit
         letterSpacing: 0,
         // terminal cursor background color and opacity (hex, rgb, hsl, hsv, hwb or cmyk)
@@ -124,9 +125,9 @@ module.exports = {
         // or `'force'`, if you want to force selection regardless of whether the terminal is in mouse events mode
         // (inside tmux or vim with mouse mode enabled for example).
         macOptionSelectionMode: 'vertical',
-        // Whether to use the WebGL renderer. Set it to false to use canvas-based
-        // rendering (slower, but supports transparent backgrounds)
-        webGLRenderer: true,
+        // Canvas rendering is slower than WebGL, but it is more reliable for
+        // mixed CJK/emoji terminal output and preserves transparent backgrounds.
+        webGLRenderer: false,
         // keypress required for weblink activation: [ctrl|alt|meta|shift]
         // todo: does not pick up config changes automatically, need to restart terminal :/
         webLinksActivationKey: '',
