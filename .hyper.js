@@ -125,9 +125,9 @@ module.exports = {
         // or `'force'`, if you want to force selection regardless of whether the terminal is in mouse events mode
         // (inside tmux or vim with mouse mode enabled for example).
         macOptionSelectionMode: 'vertical',
-        // Canvas rendering is slower than WebGL, but it is more reliable for
-        // mixed CJK/emoji terminal output and preserves transparent backgrounds.
-        webGLRenderer: false,
+        // Keep WebGL enabled so hyper-pokemon's background image remains visible.
+        // CJK overlap is handled by lineHeight and hyper-readable's terminal CSS.
+        webGLRenderer: true,
         // keypress required for weblink activation: [ctrl|alt|meta|shift]
         // todo: does not pick up config changes automatically, need to restart terminal :/
         webLinksActivationKey: '',
