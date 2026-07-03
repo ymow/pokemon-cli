@@ -158,9 +158,11 @@ exports.decorateConfig = config => {
     }
   }
 
-  // Scrim = 底色 over the image. Stronger text contrast -> lighter scrim.
+  // Scrim = 底色 over the image. Keep it light enough that the Pokemon artwork
+  // remains visible; contrast is primarily handled by the foreground pick and
+  // TUI surface colors.
   const t = (Math.max(1, Math.min(7, pickC)) - 1) / 6; // 0 (weak) .. 1 (strong)
-  const alpha = (0.68 - 0.23 * t).toFixed(3); // 0.45 (strong) .. 0.68 (weak)
+  const alpha = (0.42 - 0.20 * t).toFixed(3); // 0.22 (strong) .. 0.42 (weak)
   const scrim = `rgba(${Math.round(bg[0])}, ${Math.round(bg[1])}, ${Math.round(bg[2])}, ${alpha})`;
 
   const fg = toHex(pick);
