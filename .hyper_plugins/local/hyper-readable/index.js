@@ -83,17 +83,34 @@ function blend(c, target, k) {
 }
 
 // Synthesize a readable text color FROM the 底色: keep its hue, push lightness to
-// whichever extreme has more contrast headroom until it clears AA. Distinct 底色
-// => distinct text color, and the text stays in the background's color family.
-function deriveFromBg(bg) {
+// whichever extreme has more contrast headroom until it clears `min`. Distinct
+// 底色 => distinct text color, and the text stays in the background's family.
+function deriveFromBg(bg, min) {
   const target = contrast([0, 0, 0], bg) >= contrast([255, 255, 255], bg)
     ? [0, 0, 0]
     : [255, 255, 255];
   let k = 0.35;
   let out = blend(bg, target, k);
-  for (let i = 0; i < 12 && contrast(out, bg) < 4.6; i++) {
-    k = Math.min(1, k + 0.08);
+  for (let i = 0; i < 16 && contrast(out, bg) < min; i++) {
+    k = Math.min(1, k + 0.06);
     out = blend(bg, target, k);
+  }
+  return out.map(Math.round);
+}
+
+// Keep a color's hue but push its lightness away from the 底色 until it clears
+// `min` contrast (or hits an extreme). Used to lift murky ANSI palette entries
+// (e.g. dark blue table borders on a mid purple backdrop) into legibility.
+function ensureContrast(color, bg, min) {
+  if (contrast(color, bg) >= min) {
+    return color;
+  }
+  const target = contrast([0, 0, 0], bg) >= contrast([255, 255, 255], bg)
+    ? [0, 0, 0]
+    : [255, 255, 255];
+  let out = color;
+  for (let k = 0.1; k <= 1 && contrast(out, bg) < min; k += 0.06) {
+    out = blend(color, target, k);
   }
   return out.map(Math.round);
 }
@@ -127,14 +144,23 @@ exports.decorateConfig = config => {
 
   const AA = 4.5;
 
-  // Prefer a theme color that clears AA against 底色 (keeps each theme's flavor);
-  // among those, take the highest contrast. Otherwise best theme color, and as a
-  // last resort near-black / near-white.
+  // The visible backdrop is the pokemon image under a partial 底色 scrim, NOT
+  // pure 底色, so a pick that lands exactly on AA-vs-底色 measures well below
+  // AA in practice (observed ~3.1:1). Aim well past AA instead. Mid-tone 底色
+  // caps how much contrast ANY text color can reach (a 50%-lightness backdrop
+  // tops out near 4.7:1 even against pure white), so the target is "7:1 or
+  // just shy of the best this 底色 allows, whichever is lower".
+  const maxExtreme = Math.max(contrast([0, 0, 0], bg), contrast([255, 255, 255], bg));
+  const TARGET = Math.min(7, maxExtreme - 0.15);
+
+  // Prefer a theme color that clears TARGET against 底色 (keeps each theme's
+  // flavor); among those, take the highest contrast. Otherwise best theme
+  // color, and as a last resort near-black / near-white.
   let pick = null;
   let pickC = 0;
   palette.forEach(c => {
     const ct = contrast(c, bg);
-    if (ct >= AA && ct > pickC) {
+    if (ct >= TARGET && ct > pickC) {
       pick = c;
       pickC = ct;
     }
@@ -148,10 +174,10 @@ exports.decorateConfig = config => {
       }
     });
   }
-  // If no theme color clears AA, synthesize one from the 底色 (unique per
+  // If no theme color clears TARGET, synthesize one from the 底色 (unique per
   // background, same color family) rather than collapsing to flat black/white.
-  if (!pick || pickC < AA) {
-    const derived = deriveFromBg(bg);
+  if (!pick || pickC < TARGET) {
+    const derived = deriveFromBg(bg, TARGET);
     if (!pick || contrast(derived, bg) > pickC) {
       pick = derived;
       pickC = contrast(derived, bg);
@@ -159,29 +185,56 @@ exports.decorateConfig = config => {
   }
 
   // Scrim = 底色 over the image. Keep it light enough that the Pokemon artwork
-  // remains visible; contrast is primarily handled by the foreground pick and
-  // TUI surface colors.
-  const t = (Math.max(1, Math.min(7, pickC)) - 1) / 6; // 0 (weak) .. 1 (strong)
-  const alpha = (0.42 - 0.20 * t).toFixed(3); // 0.22 (strong) .. 0.42 (weak)
+  // remains visible, but key its strength on the 底色's contrast HEADROOM: a
+  // mid-tone 底色 caps text contrast, so it needs a heavier scrim to pull the
+  // busy image toward 底色; a very light/dark 底色 can afford a lighter one.
+  const headroom = Math.max(0, Math.min(1, (maxExtreme - 4.5) / 2.5)); // 0 (mid-tone) .. 1 (extreme)
+  const alpha = (0.45 - 0.17 * headroom).toFixed(3); // 0.45 (mid-tone) .. 0.28 (extreme)
   const scrim = `rgba(${Math.round(bg[0])}, ${Math.round(bg[1])}, ${Math.round(bg[2])}, ${alpha})`;
 
   const fg = toHex(pick);
   const readableSurface = readableSurfaceFor(pick, bg);
 
   // Some TUIs (notably Codex's user-message / attachment block) fill a panel
-  // with ANSI black / bright-black -- a "surface" shade they calibrate for a
-  // *black* terminal. Our visible backdrop is the pokemon image + 底色 scrim,
-  // not the real (transparent) terminal background, so that panel lands as a
-  // jarring near-black bar that ignores the theme. Prefer a gentle elevation of
-  // the 底色, but fall back to a contrast-safe surface if the foreground would
-  // become hard to read.
-  const elevatedSurface = blend(bg, pick, 0.14).map(Math.round);
+  // with ANSI black -- a "surface" shade they calibrate for a *black*
+  // terminal. Our visible backdrop is the pokemon image + 底色 scrim, not the
+  // real (transparent) terminal background, so that panel lands as a jarring
+  // near-black bar that ignores the theme. Prefer a gentle elevation of the
+  // 底色 (nudged AWAY from the text color so light text gets a slightly darker
+  // panel and vice versa), falling back to a contrast-safe surface.
+  const awayFromPick = readableExtremeAgainst(pick);
+  const elevatedSurface = blend(bg, awayFromPick, 0.12).map(Math.round);
   const tuiSurface = contrast(elevatedSurface, pick) >= AA ? elevatedSurface : readableSurface;
   const tuiSurfaceHex = toHex(tuiSurface);
-  const colors = Object.assign({}, config.colors || {}, {
-    black: tuiSurfaceHex,
-    lightBlack: tuiSurfaceHex,
+
+  // ANSI bright-black, however, is overwhelmingly used as muted FOREGROUND
+  // text (chalk.gray -- Claude Code's tips, timestamps, "Press up to edit..."
+  // hints). Mapping it to a surface shade made all of that text ~1.1:1 vs the
+  // backdrop, i.e. invisible. Give it a real dim-text color instead: 底色
+  // pushed toward the picked foreground until it reads as "muted but legible".
+  const DIM_TARGET = Math.min(3.5, TARGET - 1);
+  let dim = blend(bg, pick, 0.5);
+  for (let k = 0.5; k <= 1 && contrast(dim, bg) < DIM_TARGET; k += 0.05) {
+    dim = blend(bg, pick, k);
+  }
+  const dimHex = toHex(dim.map(Math.round));
+
+  // The stock ANSI palette (dark blue #0A2FC4, dark red, ...) was tuned for a
+  // black terminal; on a mid-tone scrim those hues turn to mud (table borders,
+  // spinners, accent text). Keep each hue but lift it to at least 3:1.
+  const baseColors = config.colors || {};
+  const colors = Object.assign({}, baseColors);
+  Object.keys(baseColors).forEach(name => {
+    if (name === 'black' || name === 'lightBlack') {
+      return;
+    }
+    const rgb = toRgb(baseColors[name]);
+    if (rgb) {
+      colors[name] = toHex(ensureContrast(rgb, bg, 3.0));
+    }
   });
+  colors.black = tuiSurfaceHex;
+  colors.lightBlack = dimHex;
 
   const overlayCSS = `
     /* hyper-readable: adaptive text ${fg} on 底色 ${toHex(bg)} (contrast ${pickC.toFixed(2)}); surface ${tuiSurfaceHex} */
