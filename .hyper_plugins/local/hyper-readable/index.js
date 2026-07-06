@@ -128,6 +128,77 @@ function readableSurfaceFor(fg, bg) {
   return readableExtremeAgainst(fg);
 }
 
+// --- HSL round-trip, so we can lift lightness/saturation while keeping hue. ---
+function rgbToHsl([r, g, b]) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) {
+    return [0, 0, l];
+  }
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  if (max === r) {
+    h = (g - b) / d + (g < b ? 6 : 0);
+  } else if (max === g) {
+    h = (b - r) / d + 2;
+  } else {
+    h = (r - g) / d + 4;
+  }
+  return [h * 60, s, l];
+}
+
+function hslToRgb([h, s, l]) {
+  h = ((h % 360) + 360) % 360 / 360;
+  if (s === 0) {
+    return [l * 255, l * 255, l * 255];
+  }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return [
+    hue2rgb(p, q, h + 1 / 3) * 255,
+    hue2rgb(p, q, h) * 255,
+    hue2rgb(p, q, h - 1 / 3) * 255
+  ];
+}
+
+// Make the picked text color bright AND saturated instead of a flat mid-grey:
+// keep its hue, floor the saturation so real hues stay vivid (true greys are
+// left grey), and push lightness toward whichever extreme has more headroom
+// vs the 底色 until it clears `min`. Only if a vivid tone still can't reach
+// `min` do we bleed saturation out toward the white/black extreme -- so on
+// dark backdrops the text lands as a bright, colorful tint rather than plain
+// white, matching "更亮更飽和" while staying legible.
+function vivify(color, bg, min) {
+  let [h, s, l] = rgbToHsl(color);
+  const goLight = contrast([255, 255, 255], bg) >= contrast([0, 0, 0], bg);
+  const hasHue = s > 0.08;
+  if (hasHue) {
+    s = Math.min(1, Math.max(s, 0.72));
+  }
+  l = goLight ? Math.max(l, 0.66) : Math.min(l, 0.34);
+  let out = hslToRgb([h, s, l]).map(Math.round);
+  for (let i = 0; i < 24 && contrast(out, bg) < min; i++) {
+    l = goLight ? Math.min(1, l + 0.03) : Math.max(0, l - 0.03);
+    // Near the extreme, ease saturation down so pure white/black stays reachable.
+    if ((goLight && l > 0.82) || (!goLight && l < 0.18)) {
+      s = Math.max(0, s - 0.08);
+    }
+    out = hslToRgb([h, s, l]).map(Math.round);
+  }
+  return out;
+}
+
 exports.decorateConfig = config => {
   // 底色: hyper-pokemon puts the theme background (unibody/primary) on borderColor.
   const bg = toRgb(config.borderColor) || toRgb(config.backgroundColor);
@@ -192,6 +263,11 @@ exports.decorateConfig = config => {
   const alpha = (0.45 - 0.17 * headroom).toFixed(3); // 0.45 (mid-tone) .. 0.28 (extreme)
   const scrim = `rgba(${Math.round(bg[0])}, ${Math.round(bg[1])}, ${Math.round(bg[2])}, ${alpha})`;
 
+  // Scrim stays light (artwork kept sharp), so the picked color must carry
+  // readability on its own: make it a bright, saturated tint of its hue.
+  pick = vivify(pick, bg, TARGET);
+  pickC = contrast(pick, bg);
+
   const fg = toHex(pick);
   const readableSurface = readableSurfaceFor(pick, bg);
 
@@ -212,7 +288,9 @@ exports.decorateConfig = config => {
   // hints). Mapping it to a surface shade made all of that text ~1.1:1 vs the
   // backdrop, i.e. invisible. Give it a real dim-text color instead: 底色
   // pushed toward the picked foreground until it reads as "muted but legible".
-  const DIM_TARGET = Math.min(3.5, TARGET - 1);
+  // Light scrim => the image bleeds through, so muted text needs a higher
+  // nominal target than a black terminal would to survive in practice.
+  const DIM_TARGET = Math.min(4.5, TARGET - 1);
   let dim = blend(bg, pick, 0.5);
   for (let k = 0.5; k <= 1 && contrast(dim, bg) < DIM_TARGET; k += 0.05) {
     dim = blend(bg, pick, k);

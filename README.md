@@ -31,17 +31,34 @@ adaptively from the background ("底色"):
    - otherwise synthesize a color **from the background** (same hue, lightness
      pushed to a contrasting extreme) so distinct backgrounds yield distinct,
      color-coordinated, readable text.
-3. Lay a scrim of the background color over the image (inset `box-shadow` on
+3. **Vivify** the chosen color so it reads on its own even with a light scrim
+   (`vivify()`): keep its hue, floor the saturation (~0.72 for real hues; true
+   greys stay grey — no fake color), and push lightness toward the
+   higher-contrast extreme until it clears the target. On dark backdrops this
+   lands the text as a **bright, saturated tint** rather than a flat mid-grey,
+   so it survives over the Pokémon artwork instead of blending into it.
+4. Lay a scrim of the background color over the image (inset `box-shadow` on
    `.terms_terms`, above the image but below the transparent terminal canvas, so
    it works under any renderer). Stronger text contrast → lighter scrim (image
    shows more); weaker → heavier scrim (readability wins).
-4. Keep terminal input panels readable by moving black/default TUI surfaces
+5. Keep terminal input panels readable by moving black/default TUI surfaces
    toward the same readable background when the chosen foreground would be low
    contrast on black. This fixes Codex-style prompt boxes on light Pokémon
    themes.
+6. Give muted text (ANSI bright-black — Claude Code hints, timestamps) a real
+   dim-but-legible color targeting up to **4.5:1**, since the light scrim lets
+   the image bleed through and lower targets vanish in practice.
 
 Verified across all 153 `hyper-pokemon` themes: **121 distinct text colors, 0
 below AA 4.5**.
+
+### Readability vs. artwork
+
+The scrim is deliberately kept light so the Pokémon artwork stays sharp, which
+means text must carry its own contrast — that's what the vivify step is for.
+Over the *brightest* patches of some artwork, contrast can still dip; the fix is
+to make the text brighter/more saturated (steps 2–3) rather than darkening the
+whole background.
 
 ## Install
 
