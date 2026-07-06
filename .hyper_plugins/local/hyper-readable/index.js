@@ -112,6 +112,12 @@ function ensureContrast(color, bg, min) {
   for (let k = 0.1; k <= 1 && contrast(out, bg) < min; k += 0.06) {
     out = blend(color, target, k);
   }
+  // The stepped blend can exit an epsilon short of the extreme (float rounding
+  // on k), leaving colored text just below AA. If we still haven't cleared min,
+  // snap to the target extreme -- the most contrast this 底色 can offer.
+  if (contrast(out, bg) < min) {
+    out = target;
+  }
   return out.map(Math.round);
 }
 
@@ -186,7 +192,15 @@ function vivify(color, bg, min) {
   if (hasHue) {
     s = Math.min(1, Math.max(s, 0.72));
   }
-  l = goLight ? Math.max(l, 0.66) : Math.min(l, 0.34);
+  // Mid-tone 底色 cap contrast for BOTH extremes, so the text has to swing
+  // closer to pure white/black to stay legible once the artwork bleeds through
+  // the scrim. Key the lightness floor/ceiling on the 底色's contrast headroom:
+  // little headroom (mid-tone) => push harder toward the extreme.
+  const me = Math.max(contrast([0, 0, 0], bg), contrast([255, 255, 255], bg));
+  const hr = Math.max(0, Math.min(1, (me - 4.5) / 2.5)); // 0 mid-tone .. 1 extreme
+  const litFloor = 0.80 - 0.14 * hr; // mid-tone 0.80 .. extreme 0.66
+  const darkCeil = 0.20 + 0.14 * hr; // mid-tone 0.20 .. extreme 0.34
+  l = goLight ? Math.max(l, litFloor) : Math.min(l, darkCeil);
   let out = hslToRgb([h, s, l]).map(Math.round);
   for (let i = 0; i < 24 && contrast(out, bg) < min; i++) {
     l = goLight ? Math.min(1, l + 0.03) : Math.max(0, l - 0.03);
@@ -224,6 +238,13 @@ exports.decorateConfig = config => {
   const maxExtreme = Math.max(contrast([0, 0, 0], bg), contrast([255, 255, 255], bg));
   const TARGET = Math.min(7, maxExtreme - 0.15);
 
+  // Floor for the ANSI palette (colored TUI text: Claude Code's section headers,
+  // spinners, table accents). Many themes collapse most ANSI slots onto a single
+  // near-black/near-white 'secondary', so a 3.0 floor left all colored text at
+  // ~3.6:1 -- below AA and the main "washed out" complaint. Drive them to AA, or
+  // as close as this 底色 physically allows.
+  const ANSI_MIN = Math.min(AA, maxExtreme - 0.15);
+
   // Prefer a theme color that clears TARGET against 底色 (keeps each theme's
   // flavor); among those, take the highest contrast. Otherwise best theme
   // color, and as a last resort near-black / near-white.
@@ -260,7 +281,11 @@ exports.decorateConfig = config => {
   // mid-tone 底色 caps text contrast, so it needs a heavier scrim to pull the
   // busy image toward 底色; a very light/dark 底色 can afford a lighter one.
   const headroom = Math.max(0, Math.min(1, (maxExtreme - 4.5) / 2.5)); // 0 (mid-tone) .. 1 (extreme)
-  const alpha = (0.45 - 0.17 * headroom).toFixed(3); // 0.45 (mid-tone) .. 0.28 (extreme)
+  // Mid-tone 底色 needs a heavier scrim so the visible backdrop converges on
+  // 底色 -- otherwise the artwork bleeds through and the contrast pick that
+  // measures ~4.5:1 vs pure 底色 collapses to ~3:1 in practice (washed-out text,
+  // the reported bug). Extreme 底色 can afford a lighter scrim (artwork sharp).
+  const alpha = (0.58 - 0.30 * headroom).toFixed(3); // 0.58 (mid-tone) .. 0.28 (extreme)
   const scrim = `rgba(${Math.round(bg[0])}, ${Math.round(bg[1])}, ${Math.round(bg[2])}, ${alpha})`;
 
   // Scrim stays light (artwork kept sharp), so the picked color must carry
@@ -308,17 +333,46 @@ exports.decorateConfig = config => {
     }
     const rgb = toRgb(baseColors[name]);
     if (rgb) {
-      colors[name] = toHex(ensureContrast(rgb, bg, 3.0));
+      colors[name] = toHex(ensureContrast(rgb, bg, ANSI_MIN));
     }
   });
   colors.black = tuiSurfaceHex;
   colors.lightBlack = dimHex;
+
+  // hyper-pokemon and hyper-statusline color the CHROME (tab bar, statusline,
+  // window title, split dividers) from the theme's raw `secondary`, captured
+  // before this plugin runs -- so on low-contrast themes the tabs/footer sit at
+  // the same ~3.6:1 the terminal text used to. Re-drive that chrome text to the
+  // adapted `fg` (AA vs 底色), and back the statusline with a real surface so it
+  // reads as a panel instead of raw image bleed.
+  const chromeCSS = `
+    .header_shape, .header_appTitle,
+    .tabs_nav .tabs_title,
+    .tabs_nav .tabs_list .tab_tab,
+    .tab_shape,
+    .tab_shape:hover,
+    .footer_footer,
+    .footer_footer .footer_group,
+    .footer_footer .component_item,
+    .footer_footer .item_cwd,
+    .footer_footer .item_branch {
+      color: ${fg} !important;
+    }
+    .footer_footer {
+      background-color: ${tuiSurfaceHex} !important;
+    }
+    .footer_footer .item_icon:before,
+    .terms_terms .terms_termGroup .splitpane_panes .splitpane_divider {
+      background-color: ${fg} !important;
+    }
+  `;
 
   const overlayCSS = `
     /* hyper-readable: adaptive text ${fg} on 底色 ${toHex(bg)} (contrast ${pickC.toFixed(2)}); surface ${tuiSurfaceHex} */
     .terms_terms {
       box-shadow: inset 0 0 0 100vmax ${scrim} !important;
     }
+    ${chromeCSS}
   `;
   const terminalCSS = `
     /* Avoid theme/plugin text shadows double-painting CJK glyphs. */
