@@ -60,6 +60,10 @@ function toHex([r, g, b]) {
     .join('');
 }
 
+function transparentRgb([r, g, b]) {
+  return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, 0)`;
+}
+
 // WCAG relative luminance + contrast ratio.
 function channelLin(c) {
   const s = c / 255;
@@ -385,9 +389,30 @@ exports.decorateConfig = config => {
       -webkit-text-stroke-width: 0 !important;
       filter: none !important;
     }
+    /*
+     * Codex asks the terminal for OSC 10/11 default colors and changes its
+     * panel colors from that answer. hyper-pokemon needs a transparent xterm
+     * background so the artwork remains visible, but a transparent color whose
+     * RGB comes from the theme's secondary makes apps infer the wrong 底色.
+     * The returned config below keeps alpha at 0 while setting RGB to the real
+     * Pokemon 底色; these DOM rules are a fallback for non-canvas renderers.
+     */
+    .xterm-rows .xterm-bg-0 {
+      background-color: ${tuiSurfaceHex} !important;
+    }
+    .xterm-rows .xterm-fg-0 {
+      color: ${tuiSurfaceHex} !important;
+    }
+    .xterm-rows span[style*="background-color: rgb(0, 0, 0)"],
+    .xterm-rows span[style*="background-color:#000"],
+    .xterm-rows span[style*="background-color: #000"] {
+      background-color: ${tuiSurfaceHex} !important;
+      color: ${fg} !important;
+    }
   `;
 
   return Object.assign({}, config, {
+    backgroundColor: transparentRgb(bg),
     foregroundColor: fg,
     cursorColor: fg,
     cursorAccentColor: toHex(readableExtremeAgainst(pick)),
