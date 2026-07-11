@@ -125,7 +125,10 @@ module.exports = {
         // or `'force'`, if you want to force selection regardless of whether the terminal is in mouse events mode
         // (inside tmux or vim with mouse mode enabled for example).
         macOptionSelectionMode: 'vertical',
-        // Keep WebGL enabled so hyper-pokemon's background image remains visible.
+        // NOTE: hyper-readable makes the terminal background transparent (so the
+        // Pokemon artwork shows through), and Hyper automatically falls back to
+        // the canvas renderer for transparent backgrounds -- WebGL is effectively
+        // off regardless of this flag. Left `true` as the harmless default.
         // CJK overlap is handled by lineHeight and hyper-readable's terminal CSS.
         webGLRenderer: true,
         // keypress required for weblink activation: [ctrl|alt|meta|shift]

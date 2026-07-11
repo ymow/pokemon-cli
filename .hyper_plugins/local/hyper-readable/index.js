@@ -2,27 +2,33 @@
 
 // hyper-readable
 // -----------------------------------------------------------------------------
-// hyper-pokemon picks a RANDOM theme each launch. Each theme is a small palette
-// (primary / secondary / tertiary) over a full-bleed background image, and the
-// plugin hard-wires the terminal text to the theme's `secondary` color. Many
-// secondaries are near-black or mid-tone, so over a busy/dark image they're
-// hard to read -- and a single fixed text-shadow halo can't fix every theme and
-// is ignored under the WebGL/canvas renderers anyway.
+// hyper-pokemon picks a RANDOM theme each launch: a small palette
+// (primary / secondary / tertiary / unibody) over a full-bleed background image.
+// It hard-wires the terminal text to the theme's `secondary`, and many themes
+// have a LIGHT/mid `unibody` (底色). That is the root readability bug:
 //
-// Instead, ADAPT to each theme's own background ("底色") so every background
-// gets its OWN, different, readable text color:
-//   1. Read the resolved background color (hyper-pokemon sets it on
-//      `borderColor` = the theme's unibody/primary).
-//   2. From the theme's own palette (primary / secondary / tertiary) pick the
-//      color with the best WCAG contrast against that background; prefer one
-//      that clears AA (4.5:1), and fall back to near-black / near-white only if
-//      none of the theme colors do. -> different background => different text.
-//   3. Lay a scrim of the BACKGROUND color over the image so the effective
-//      backdrop converges on 底色 (making the contrast pick valid regardless of
-//      the image). Stronger text contrast -> lighter scrim (image shows more);
-//      weaker -> heavier scrim (readability wins). The scrim is an inset
-//      box-shadow on `.terms_terms`, painted above the image but below the
-//      (transparent) terminal canvas, so it works under any renderer.
+//   Terminal apps -- Codex, Starship, Claude Code, git, ls -- pick their colors
+//   assuming a DARK background (bright orange version numbers, cyan accents,
+//   grey "muted" hints). On a light 底色 those wash out, and most of them emit
+//   256-color / truecolor that BYPASSES the 16-slot ANSI palette entirely, so no
+//   amount of palette remapping can recolor them. This Hyper's bundled xterm is
+//   also too old to expose `minimumContrastRatio`, so there is no renderer-level
+//   contrast lift either.
+//
+// So instead of adapting text to each (often light) 底色, we make the effective
+// backdrop DARK for every theme -- the environment those apps expect -- while
+// KEEPING each theme's hue so the flavor survives:
+//   1. Take the theme 底色 (borderColor = unibody), keep its hue, and force it
+//      dark. That dark tint is the effective backdrop.
+//   2. Render bright, light text (a light tint of the same hue) plus a full
+//      bright-on-dark ANSI palette. Now ANSI *and* app truecolor both read,
+//      because everything was designed for a dark background.
+//   3. Lay a heavy scrim of the DARK 底色 over the image (readability-first) so
+//      the visible backdrop converges on that dark tint. The artwork still shows
+//      through, dimmed. The scrim is an inset box-shadow on `.terms_terms`,
+//      painted above the image but below the (transparent) terminal canvas, so
+//      it works under the canvas renderer Hyper falls back to for transparent
+//      backgrounds.
 
 // Parse '#rgb' / '#rrggbb' / 'rgb()' / 'rgba()' into [r, g, b] (0-255).
 function toRgb(input) {
@@ -86,22 +92,6 @@ function blend(c, target, k) {
   return c.map((v, i) => v + (target[i] - v) * k);
 }
 
-// Synthesize a readable text color FROM the 底色: keep its hue, push lightness to
-// whichever extreme has more contrast headroom until it clears `min`. Distinct
-// 底色 => distinct text color, and the text stays in the background's family.
-function deriveFromBg(bg, min) {
-  const target = contrast([0, 0, 0], bg) >= contrast([255, 255, 255], bg)
-    ? [0, 0, 0]
-    : [255, 255, 255];
-  let k = 0.35;
-  let out = blend(bg, target, k);
-  for (let i = 0; i < 16 && contrast(out, bg) < min; i++) {
-    k = Math.min(1, k + 0.06);
-    out = blend(bg, target, k);
-  }
-  return out.map(Math.round);
-}
-
 // Keep a color's hue but push its lightness away from the 底色 until it clears
 // `min` contrast (or hits an extreme). Used to lift murky ANSI palette entries
 // (e.g. dark blue table borders on a mid purple backdrop) into legibility.
@@ -123,19 +113,6 @@ function ensureContrast(color, bg, min) {
     out = target;
   }
   return out.map(Math.round);
-}
-
-function readableExtremeAgainst(color) {
-  return contrast([0, 0, 0], color) >= contrast([255, 255, 255], color)
-    ? [0, 0, 0]
-    : [255, 255, 255];
-}
-
-function readableSurfaceFor(fg, bg) {
-  if (contrast(bg, fg) >= 4.5) {
-    return bg;
-  }
-  return readableExtremeAgainst(fg);
 }
 
 // --- HSL round-trip, so we can lift lightness/saturation while keeping hue. ---
@@ -182,35 +159,18 @@ function hslToRgb([h, s, l]) {
   ];
 }
 
-// Make the picked text color bright AND saturated instead of a flat mid-grey:
-// keep its hue, floor the saturation so real hues stay vivid (true greys are
-// left grey), and push lightness toward whichever extreme has more headroom
-// vs the 底色 until it clears `min`. Only if a vivid tone still can't reach
-// `min` do we bleed saturation out toward the white/black extreme -- so on
-// dark backdrops the text lands as a bright, colorful tint rather than plain
-// white, matching "更亮更飽和" while staying legible.
-function vivify(color, bg, min) {
-  let [h, s, l] = rgbToHsl(color);
-  const goLight = contrast([255, 255, 255], bg) >= contrast([0, 0, 0], bg);
-  const hasHue = s > 0.08;
-  if (hasHue) {
-    s = Math.min(1, Math.max(s, 0.72));
-  }
-  // Mid-tone 底色 cap contrast for BOTH extremes, so the text has to swing
-  // closer to pure white/black to stay legible once the artwork bleeds through
-  // the scrim. Key the lightness floor/ceiling on the 底色's contrast headroom:
-  // little headroom (mid-tone) => push harder toward the extreme.
-  const me = Math.max(contrast([0, 0, 0], bg), contrast([255, 255, 255], bg));
-  const hr = Math.max(0, Math.min(1, (me - 4.5) / 2.5)); // 0 mid-tone .. 1 extreme
-  const litFloor = 0.80 - 0.14 * hr; // mid-tone 0.80 .. extreme 0.66
-  const darkCeil = 0.20 + 0.14 * hr; // mid-tone 0.20 .. extreme 0.34
-  l = goLight ? Math.max(l, litFloor) : Math.min(l, darkCeil);
+// Keep a color's hue but pin it to a target lightness (and clamp saturation),
+// then guarantee it clears `min` contrast vs the (dark) backdrop by pushing
+// lightness up. Used to build the light text + bright ANSI palette.
+function toLight(color, bg, targetL, satCap, min) {
+  let [h, s] = rgbToHsl(color);
+  s = Math.min(s, satCap);
+  let l = targetL;
   let out = hslToRgb([h, s, l]).map(Math.round);
   for (let i = 0; i < 24 && contrast(out, bg) < min; i++) {
-    l = goLight ? Math.min(1, l + 0.03) : Math.max(0, l - 0.03);
-    // Near the extreme, ease saturation down so pure white/black stays reachable.
-    if ((goLight && l > 0.82) || (!goLight && l < 0.18)) {
-      s = Math.max(0, s - 0.08);
+    l = Math.min(1, l + 0.03);
+    if (l > 0.9) {
+      s = Math.max(0, s - 0.06); // ease toward white so pure light stays reachable
     }
     out = hslToRgb([h, s, l]).map(Math.round);
   }
@@ -219,126 +179,72 @@ function vivify(color, bg, min) {
 
 exports.decorateConfig = config => {
   // 底色: hyper-pokemon puts the theme background (unibody/primary) on borderColor.
-  const bg = toRgb(config.borderColor) || toRgb(config.backgroundColor);
-  if (!bg) {
+  const rawBg = toRgb(config.borderColor) || toRgb(config.backgroundColor);
+  if (!rawBg) {
     return config;
   }
 
-  // Recover the theme's own palette from what hyper-pokemon wrote:
-  //   foregroundColor = secondary, colors.black = tertiary, selectionColor = primary@0.3
-  const secondary = toRgb(config.foregroundColor);
-  const tertiary = config.colors ? toRgb(config.colors.black) : null;
-  const primary = toRgb(config.selectionColor);
-  const palette = [secondary, tertiary, primary].filter(Boolean);
-
   const AA = 4.5;
+  const TARGET = 7;
 
-  // The visible backdrop is the pokemon image under a partial 底色 scrim, NOT
-  // pure 底色, so a pick that lands exactly on AA-vs-底色 measures well below
-  // AA in practice (observed ~3.1:1). Aim well past AA instead. Mid-tone 底色
-  // caps how much contrast ANY text color can reach (a 50%-lightness backdrop
-  // tops out near 4.7:1 even against pure white), so the target is "7:1 or
-  // just shy of the best this 底色 allows, whichever is lower".
-  const maxExtreme = Math.max(contrast([0, 0, 0], bg), contrast([255, 255, 255], bg));
-  const TARGET = Math.min(7, maxExtreme - 0.15);
+  // --- Effective backdrop: the theme's hue, forced DARK. --------------------
+  // Terminal apps assume a dark background; keep the flavor (hue) but drop the
+  // lightness so every theme lands in the environment those apps expect. Floor
+  // the saturation a little so the hue is still visible at low lightness (a
+  // near-grey 底色 stays a neutral near-black).
+  const [bgHue, bgSatRaw] = rgbToHsl(rawBg);
+  const bgSat = bgSatRaw < 0.06 ? bgSatRaw : Math.min(0.55, Math.max(bgSatRaw, 0.30));
+  const bg = hslToRgb([bgHue, bgSat, 0.13]).map(Math.round);
 
-  // Floor for the ANSI palette (colored TUI text: Claude Code's section headers,
-  // spinners, table accents). Many themes collapse most ANSI slots onto a single
-  // near-black/near-white 'secondary', so a 3.0 floor left all colored text at
-  // ~3.6:1 -- below AA and the main "washed out" complaint. Drive them to AA, or
-  // as close as this 底色 physically allows.
-  const ANSI_MIN = Math.min(AA, maxExtreme - 0.15);
-
-  // Prefer a theme color that clears TARGET against 底色 (keeps each theme's
-  // flavor); among those, take the highest contrast. Otherwise best theme
-  // color, and as a last resort near-black / near-white.
-  let pick = null;
-  let pickC = 0;
-  palette.forEach(c => {
-    const ct = contrast(c, bg);
-    if (ct >= TARGET && ct > pickC) {
-      pick = c;
-      pickC = ct;
-    }
-  });
-  if (!pick) {
-    palette.forEach(c => {
-      const ct = contrast(c, bg);
-      if (ct > pickC) {
-        pick = c;
-        pickC = ct;
-      }
-    });
-  }
-  // If no theme color clears TARGET, synthesize one from the 底色 (unique per
-  // background, same color family) rather than collapsing to flat black/white.
-  if (!pick || pickC < TARGET) {
-    const derived = deriveFromBg(bg, TARGET);
-    if (!pick || contrast(derived, bg) > pickC) {
-      pick = derived;
-      pickC = contrast(derived, bg);
-    }
-  }
-
-  // Scrim = 底色 over the image. Keep it light enough that the Pokemon artwork
-  // remains visible, but key its strength on the 底色's contrast HEADROOM: a
-  // mid-tone 底色 caps text contrast, so it needs a heavier scrim to pull the
-  // busy image toward 底色; a very light/dark 底色 can afford a lighter one.
-  const headroom = Math.max(0, Math.min(1, (maxExtreme - 4.5) / 2.5)); // 0 (mid-tone) .. 1 (extreme)
-  // Mid-tone 底色 needs a heavier scrim so the visible backdrop converges on
-  // 底色 -- otherwise the artwork bleeds through and the contrast pick that
-  // measures ~4.5:1 vs pure 底色 collapses to ~3:1 in practice (washed-out text,
-  // the reported bug). Extreme 底色 can afford a lighter scrim (artwork sharp).
-  const alpha = (0.58 - 0.30 * headroom).toFixed(3); // 0.58 (mid-tone) .. 0.28 (extreme)
-  const scrim = `rgba(${Math.round(bg[0])}, ${Math.round(bg[1])}, ${Math.round(bg[2])}, ${alpha})`;
-
-  // Scrim stays light (artwork kept sharp), so the picked color must carry
-  // readability on its own: make it a bright, saturated tint of its hue.
-  pick = vivify(pick, bg, TARGET);
-  pickC = contrast(pick, bg);
-
+  // --- Text: a bright, light tint of the same hue. --------------------------
+  const pick = toLight(rawBg, bg, 0.92, 0.42, TARGET);
+  const pickC = contrast(pick, bg);
   const fg = toHex(pick);
-  const readableSurface = readableSurfaceFor(pick, bg);
 
-  // Some TUIs (notably Codex's user-message / attachment block) fill a panel
-  // with ANSI black -- a "surface" shade they calibrate for a *black*
-  // terminal. Our visible backdrop is the pokemon image + 底色 scrim, not the
-  // real (transparent) terminal background, so that panel lands as a jarring
-  // near-black bar that ignores the theme. Prefer a gentle elevation of the
-  // 底色 (nudged AWAY from the text color so light text gets a slightly darker
-  // panel and vice versa), falling back to a contrast-safe surface.
-  const awayFromPick = readableExtremeAgainst(pick);
-  const elevatedSurface = blend(bg, awayFromPick, 0.12).map(Math.round);
-  const tuiSurface = contrast(elevatedSurface, pick) >= AA ? elevatedSurface : readableSurface;
+  // --- Scrim = the dark 底色 over the image (readability-first). -------------
+  // Heavy enough that even the bright regions of the artwork (a white Lugia
+  // body) stay dark behind text, but not opaque -- the art still ghosts through.
+  const alpha = '0.760';
+  const scrim = `rgba(${bg[0]}, ${bg[1]}, ${bg[2]}, ${alpha})`;
+
+  // Surface for ANSI-black-background panels (Codex's message/attachment block):
+  // the dark 底色, a hair elevated so the panel reads as a raised card, not a
+  // hole. Light text keeps clearing AA against it.
+  const tuiSurface = blend(bg, [255, 255, 255], 0.07).map(Math.round);
   const tuiSurfaceHex = toHex(tuiSurface);
 
-  // ANSI bright-black, however, is overwhelmingly used as muted FOREGROUND
-  // text (chalk.gray -- Claude Code's tips, timestamps, "Press up to edit..."
-  // hints). Mapping it to a surface shade made all of that text ~1.1:1 vs the
-  // backdrop, i.e. invisible. Give it a real dim-text color instead: 底色
-  // pushed toward the picked foreground until it reads as "muted but legible".
-  // Light scrim => the image bleeds through, so muted text needs a higher
-  // nominal target than a black terminal would to survive in practice.
-  const DIM_TARGET = Math.min(4.5, TARGET - 1);
-  let dim = blend(bg, pick, 0.5);
-  for (let k = 0.5; k <= 1 && contrast(dim, bg) < DIM_TARGET; k += 0.05) {
-    dim = blend(bg, pick, k);
-  }
-  const dimHex = toHex(dim.map(Math.round));
+  // Muted / dim foreground text (ANSI bright-black -- chalk.gray hints,
+  // timestamps): a soft light-grey tint of the hue. Legible but clearly quieter
+  // than the main text. Clamp to a real AA floor so it never washes out.
+  const dim = toLight(rawBg, bg, 0.66, 0.20, Math.min(AA, TARGET - 1));
+  const dimHex = toHex(dim);
 
-  // The stock ANSI palette (dark blue #0A2FC4, dark red, ...) was tuned for a
-  // black terminal; on a mid-tone scrim those hues turn to mud (table borders,
-  // spinners, accent text). Keep each hue but lift it to at least 3:1.
+  // A full bright-on-dark ANSI palette, tinted toward each hue and guaranteed
+  // >= AA against the dark backdrop. Replaces hyper-pokemon's collapsed palette
+  // (which mapped most slots onto the theme's dark `secondary` -- invisible on a
+  // dark backdrop). Base hues are standard "designed for dark terminal" values.
+  const BRIGHT = {
+    red: [255, 107, 107],
+    green: [95, 245, 145],
+    yellow: [255, 214, 107],
+    blue: [107, 168, 255],
+    magenta: [255, 123, 230],
+    cyan: [95, 240, 245],
+    white: [230, 230, 238],
+    lightRed: [255, 143, 143],
+    lightGreen: [141, 255, 176],
+    lightYellow: [255, 229, 143],
+    lightBlue: [147, 192, 255],
+    lightMagenta: [255, 159, 238],
+    lightCyan: [143, 246, 250],
+    lightWhite: [255, 255, 255],
+    limeGreen: [120, 240, 130],
+    lightCoral: [255, 150, 150]
+  };
   const baseColors = config.colors || {};
   const colors = Object.assign({}, baseColors);
-  Object.keys(baseColors).forEach(name => {
-    if (name === 'black' || name === 'lightBlack') {
-      return;
-    }
-    const rgb = toRgb(baseColors[name]);
-    if (rgb) {
-      colors[name] = toHex(ensureContrast(rgb, bg, ANSI_MIN));
-    }
+  Object.keys(BRIGHT).forEach(name => {
+    colors[name] = toHex(ensureContrast(BRIGHT[name], bg, AA));
   });
   colors.black = tuiSurfaceHex;
   colors.lightBlack = dimHex;
@@ -390,23 +296,16 @@ exports.decorateConfig = config => {
       filter: none !important;
     }
     /*
-     * Codex asks the terminal for OSC 10/11 default colors and changes its
-     * panel colors from that answer. hyper-pokemon needs a transparent xterm
-     * background so the artwork remains visible, but a transparent color whose
-     * RGB comes from the theme's secondary makes apps infer the wrong 底色.
-     * The returned config below keeps alpha at 0 while setting RGB to the real
-     * Pokemon 底色; these DOM rules are a fallback for non-canvas renderers.
+     * We keep the xterm background transparent (alpha 0) so the artwork shows,
+     * but set its RGB to the real dark 底色 so apps that probe OSC 10/11 for the
+     * default background infer a DARK terminal and pick colors accordingly.
+     * These DOM rules only bite under the (unused) DOM renderer; they map an
+     * app's ANSI-black default cell onto the dark surface as a harmless fallback.
      */
     .xterm-rows .xterm-bg-0 {
       background-color: ${tuiSurfaceHex} !important;
     }
     .xterm-rows .xterm-fg-0 {
-      color: ${tuiSurfaceHex} !important;
-    }
-    .xterm-rows span[style*="background-color: rgb(0, 0, 0)"],
-    .xterm-rows span[style*="background-color:#000"],
-    .xterm-rows span[style*="background-color: #000"] {
-      background-color: ${tuiSurfaceHex} !important;
       color: ${fg} !important;
     }
   `;
@@ -415,7 +314,7 @@ exports.decorateConfig = config => {
     backgroundColor: transparentRgb(bg),
     foregroundColor: fg,
     cursorColor: fg,
-    cursorAccentColor: toHex(readableExtremeAgainst(pick)),
+    cursorAccentColor: toHex(bg),
     colors,
     termCSS: `${config.termCSS || ''}\n${terminalCSS}`,
     css: `${config.css || ''}\n${overlayCSS}`
