@@ -18,47 +18,38 @@ npm automatically by Hyper from the `plugins` array — they are not vendored he
 
 `hyper-pokemon` picks a random theme each launch and hard-wires the terminal
 text to the theme's `secondary` color, which is often near-black or mid-tone and
-disappears over a busy/dark background image. `hyper-readable` fixes this so
-**every background gets its own, different, readable text color**, chosen
-adaptively from the background ("底色"):
+disappears over the artwork. `hyper-readable` fixes this by analyzing the
+selected background PNG instead of covering it with a global mask:
 
-1. Read the resolved background color (`borderColor` = the theme's
-   unibody/primary).
-2. Pick the text color with the best [WCAG](https://www.w3.org/TR/WCAG21/#contrast-minimum)
-   contrast against it:
-   - prefer one of the theme's own palette colors that clears **AA (4.5:1)** —
-     keeps each theme's flavor;
-   - otherwise synthesize a color **from the background** (same hue, lightness
-     pushed to a contrasting extreme) so distinct backgrounds yield distinct,
-     color-coordinated, readable text.
-3. **Vivify** the chosen color so it reads on its own even with a light scrim
-   (`vivify()`): keep its hue, floor the saturation (~0.72 for real hues; true
-   greys stay grey — no fake color), and push lightness toward the
-   higher-contrast extreme until it clears the target. On dark backdrops this
-   lands the text as a **bright, saturated tint** rather than a flat mid-grey,
-   so it survives over the Pokémon artwork instead of blending into it.
-4. Lay a scrim of the background color over the image (inset `box-shadow` on
-   `.terms_terms`, above the image but below the transparent terminal canvas, so
-   it works under any renderer). Stronger text contrast → lighter scrim (image
-   shows more); weaker → heavier scrim (readability wins).
-5. Keep terminal input panels readable by moving black/default TUI surfaces
-   toward the same readable background when the chosen foreground would be low
-   contrast on black. This fixes Codex-style prompt boxes on light Pokémon
-   themes.
-6. Give muted text (ANSI bright-black — Claude Code hints, timestamps) a real
-   dim-but-legible color targeting up to **4.5:1**, since the light scrim lets
-   the image bleed through and lower targets vanish in practice.
+1. Read the `file://.../backgrounds/<pokemon>.png` that `hyper-pokemon` injected
+   into `.terms_terms`.
+2. Decode and sample the PNG directly. The outer band/corners are treated as the
+   real artwork background, and the dominant edge color becomes the contrast
+   target.
+3. Pick a foreground from theme-tinted candidates first; fall back to pure
+   black/white only when the image is too close to the AA limit for tinted text.
+4. Rebuild the ANSI palette in the same light/dark direction so TUI colors,
+   Claude/Codex hints, tables, and status text stay readable.
+5. Keep opaque surfaces only where terminal apps explicitly ask for ANSI black
+   cells or chrome panels. The Pokémon artwork itself is not darkened by a
+   full-window scrim.
 
-Verified across all 153 `hyper-pokemon` themes: **121 distinct text colors, 0
-below AA 4.5**.
+Validate it against the installed `hyper-pokemon` package:
+
+```sh
+node scripts/validate-hyper-readable.js
+```
+
+Current validation across all 153 PNG backgrounds: **153 parsed, 90 distinct
+foreground colors, minimum dominant-background contrast 4.54:1**.
 
 ### Readability vs. artwork
 
-The scrim is deliberately kept light so the Pokémon artwork stays sharp, which
-means text must carry its own contrast — that's what the vivify step is for.
-Over the *brightest* patches of some artwork, contrast can still dip; the fix is
-to make the text brighter/more saturated (steps 2–3) rather than darkening the
-whole background.
+The plugin now optimizes for the actual artwork background instead of forcing
+the whole terminal into a dark or light overlay. Some images contain both very
+bright and very dark regions, so no single transparent text color can be AA over
+every pixel; in those cases the dominant background remains readable and TUI
+panels get real surfaces.
 
 ## Install
 

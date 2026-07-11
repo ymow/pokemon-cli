@@ -42,10 +42,10 @@ module.exports = {
         // custom CSS to embed in the main window
         css: '',
         // custom CSS to embed in the terminal window
-        // Readability is handled per-theme by the local `hyper-readable` plugin
-        // (adaptive scrim based on each pokemon theme's resolved text color),
-        // because a fixed text-shadow halo only helps light text and is ignored
-        // by the WebGL/canvas renderers anyway.
+        // Readability is handled per-theme by the local `hyper-readable` plugin.
+        // It samples the selected pokemon PNG and chooses foreground/ANSI colors
+        // against the artwork background; fixed text-shadow halos are ignored by
+        // the WebGL/canvas renderers anyway.
         termCSS: '',
         // set custom startup directory (must be an absolute path)
         workingDirectory: '',
